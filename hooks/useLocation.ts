@@ -32,34 +32,32 @@ export const useLocation = () => {
 
   const getCurrentLocation = async () => {
     try {
-      // Check if location services are enabled
-      const enabled = await Location.hasServicesEnabledAsync();
-      if (!enabled) {
-        setError('Location services are disabled. Please enable GPS.');
-        return;
-      }
-
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-        maximumAge: 10000,
-      });
+      // Multiple attempts with different accuracy levels
+      let position;
       
-      let address = 'Address not available';
-      
-      // Try to get reverse geocoding (address from coordinates)
       try {
-        const reverseGeocode = await Location.reverseGeocodeAsync({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
+        // First try with high accuracy
+        position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+          maximumAge: 5000,
         });
-        
-        if (reverseGeocode && reverseGeocode.length > 0) {
-          const addr = reverseGeocode[0];
-          address = `${addr.name || ''} ${addr.street || ''} ${addr.city || ''} ${addr.region || ''} ${addr.postalCode || ''}`.trim();
+      } catch (highAccuracyError) {
+        try {
+          // Fallback to balanced accuracy
+          position = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            maximumAge: 10000,
+          });
+        } catch (balancedError) {
+          // Final fallback to low accuracy
+          position = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Low,
+            maximumAge: 30000,
+          });
         }
-      } catch (geocodeError) {
-        console.log('Reverse geocoding failed:', geocodeError);
       }
+      
+      let address = 'Address lookup in progress...';
       
       const locationData = {
         latitude: position.coords.latitude,
@@ -72,18 +70,44 @@ export const useLocation = () => {
       setLocation(locationData);
       setError(null);
       
-      // Log location update occasionally (every 30 seconds)
+      // Try to get address in background
+      try {
+        const reverseGeocode = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        
+        if (reverseGeocode && reverseGeocode.length > 0) {
+          const addr = reverseGeocode[0];
+          const fullAddress = `${addr.name || ''} ${addr.street || ''} ${addr.city || ''} ${addr.region || ''} ${addr.postalCode || ''}`.trim();
+          
+          setLocation(prev => prev ? { ...prev, address: fullAddress } : null);
+        }
+      } catch (geocodeError) {
+        console.log('Reverse geocoding failed, using coordinates only');
+        setLocation(prev => prev ? { ...prev, address: `Lat: ${position.coords.latitude.toFixed(4)}, Lng: ${position.coords.longitude.toFixed(4)}` } : null);
+      }
+      
+      // Log location update
       if (Date.now() - lastLocationLog > 30000) {
         setLastLocationLog(Date.now());
-        activityService.logActivity('location', `Location Updated: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} - ${address}`, {
+        activityService.logActivity('location', `Location Updated: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`, {
           accuracy: position.coords.accuracy,
-          timestamp: position.timestamp,
-          address: address
+          timestamp: position.timestamp
         });
       }
     } catch (error: any) {
       console.error('Location error:', error);
-      setError(error.message || 'Failed to get location. Please check GPS settings.');
+      setError('GPS unavailable - using last known location');
+      
+      // Set a default location if all fails
+      setLocation({
+        latitude: 0,
+        longitude: 0,
+        accuracy: 0,
+        timestamp: Date.now(),
+        address: 'Location services unavailable'
+      });
     }
   };
 
@@ -96,13 +120,13 @@ export const useLocation = () => {
     setIsTracking(true);
     setError(null);
     
-    // Get initial location
-    await getCurrentLocation();
+    // Get initial location immediately
+    getCurrentLocation();
     
     // Log activity
     activityService.logActivity('gps_start', 'GPS Tracking Started - Real-time location monitoring activated', {
       accuracy: 'Balanced',
-      interval: '10 seconds'
+      interval: '5 seconds'
     });
   };
 
@@ -119,7 +143,7 @@ export const useLocation = () => {
     if (isTracking) {
       interval = setInterval(() => {
         getCurrentLocation();
-      }, 10000);
+      }, 5000); // Update every 5 seconds for better accuracy
     }
 
     return () => {

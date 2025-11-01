@@ -130,8 +130,8 @@ export default function ActivityScreen() {
               </Text>
             </Card>
           ) : (
-            activityData.map((item) => (
-              <Card key={item.id} style={styles.itemCard}>
+            activityData.map((item, index) => (
+              <Card key={`activity-${item.id}-${index}`} style={styles.itemCard}>
                 <View style={styles.itemContent}>
                   <Ionicons
                     name={getIcon(item.type) as any}
@@ -171,8 +171,8 @@ export default function ActivityScreen() {
               </Text>
             </Card>
           ) : (
-            alertsData.map((alert) => (
-              <Card key={alert.id} style={styles.itemCard}>
+            alertsData.map((alert, index) => (
+              <Card key={`alert-${alert.id}-${index}`} style={styles.itemCard}>
                 <View style={styles.itemContent}>
                   <Ionicons
                     name={getIcon(alert.type) as any}

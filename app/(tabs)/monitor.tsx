@@ -28,6 +28,11 @@ export default function MonitorScreen() {
           text: 'Simulate',
           style: 'destructive',
           onPress: async () => {
+            // Start location tracking if not already started
+            if (!isTracking) {
+              await startTracking();
+            }
+            
             // Save alert to Firebase with location
             if (user?.id) {
               await firebaseService.saveAlert({

@@ -22,6 +22,7 @@ export default function RootLayout() {
           <Stack.Screen name="sensors" options={{ headerShown: false }} />
           <Stack.Screen name="emergency" options={{ headerShown: false }} />
           <Stack.Screen name="test-native-sms" options={{ headerShown: false, title: 'Test Native SMS' }} />
+          <Stack.Screen name="test-sms" options={{ headerShown: false, title: 'Test SMS' }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         </Stack>
