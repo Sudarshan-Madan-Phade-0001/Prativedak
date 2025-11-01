@@ -65,9 +65,86 @@ export class BareWorkflowEmergencyService {
       return;
     }
 
-    const locationText = location 
-      ? `Location: https://maps.google.com/?q=${location.latitude},${location.longitude}`
-      : 'Location: Unknown';
+    let locationText = 'Location: Getting current location...';
+    
+    // Try multiple methods to get location
+    try {
+      console.log('📍 Getting location for emergency (multiple attempts)...');
+      const Location = require('expo-location');
+      
+      // Check if location services are enabled
+      if (!Location || !Location.hasServicesEnabledAsync) {
+        throw new Error('expo-location not properly linked');
+      }
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        locationText = 'Location: GPS disabled - please enable location services';
+      } else {
+        // Request permission
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          locationText = 'Location: Permission denied';
+        } else {
+          let position = null;
+          
+          // Try multiple accuracy levels
+          try {
+            // First try: High accuracy with timeout
+            position = await Promise.race([
+              Location.getCurrentPositionAsync({ 
+                accuracy: Location.Accuracy.High,
+                maximumAge: 5000 
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('High accuracy timeout')), 8000))
+            ]);
+          } catch (highError) {
+            console.log('📍 High accuracy failed, trying balanced...');
+            try {
+              // Second try: Balanced accuracy
+              position = await Promise.race([
+                Location.getCurrentPositionAsync({ 
+                  accuracy: Location.Accuracy.Balanced,
+                  maximumAge: 10000 
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Balanced accuracy timeout')), 5000))
+              ]);
+            } catch (balancedError) {
+              console.log('📍 Balanced failed, trying low accuracy...');
+              try {
+                // Third try: Low accuracy (most reliable)
+                position = await Location.getCurrentPositionAsync({ 
+                  accuracy: Location.Accuracy.Low,
+                  maximumAge: 30000 
+                });
+              } catch (lowError) {
+                console.log('📍 All GPS attempts failed');
+              }
+            }
+          }
+          
+          if (position && position.coords && position.coords.latitude && position.coords.longitude) {
+            const lat = position.coords.latitude.toFixed(6);
+            const lng = position.coords.longitude.toFixed(6);
+            const accuracy = position.coords.accuracy || 'unknown';
+            locationText = `Location: ${lat}, ${lng}\nAccuracy: ${accuracy}m\nMap: https://maps.google.com/?q=${lat},${lng}`;
+            console.log(`📍 Location obtained: ${lat}, ${lng} (accuracy: ${accuracy}m)`);
+          } else {
+            throw new Error('No valid coordinates obtained');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('📍 All location methods failed:', error);
+      // Use fallback location if available
+      if (location && location.latitude !== 0 && location.longitude !== 0) {
+        const lat = location.latitude.toFixed(6);
+        const lng = location.longitude.toFixed(6);
+        locationText = `Location: ${lat}, ${lng} (cached)\nMap: https://maps.google.com/?q=${lat},${lng}`;
+        console.log(`📍 Using cached location: ${lat}, ${lng}`);
+      } else {
+        locationText = 'Location: GPS unstable - using approximate location\nPlease check GPS settings';
+      }
+    }
 
     const emergencyMessage = `🚨 AUTOMATIC EMERGENCY ALERT 🚨\n\nUser: ${user.name}\nTime: ${new Date().toLocaleString()}\n${locationText}\n\nThis is an AUTOMATIC alert from Prativedak Safety App. The user may be in danger and unable to respond.`;
 
@@ -119,8 +196,9 @@ export class BareWorkflowEmergencyService {
       }
     }
 
-    // 3. Send WhatsApp to primary contact
-    console.log('💬 Opening WhatsApp for primary contact...');
+    // 3. Send WhatsApp to primary contact (after 5 seconds delay)
+    console.log('💬 Opening WhatsApp for primary contact after delay...');
+    await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
     try {
       results.whatsappResult = await this.sendWhatsAppEmergency(primaryContact.phone, emergencyMessage);
     } catch (error) {
@@ -132,26 +210,7 @@ export class BareWorkflowEmergencyService {
     onComplete?.(results);
   }
 
-  private async sendWhatsAppEmergency(phoneNumber: string, message: string) {
-    try {
-      const formattedNumber = phoneNumber.replace(/\D/g, '');
-      const whatsappNumber = formattedNumber.startsWith('91') ? formattedNumber : `91${formattedNumber}`;
-      
-      const whatsappUrl = `whatsapp://send?phone=${whatsappNumber}&text=${encodeURIComponent(message)}`;
-      
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      if (canOpen) {
-        await Linking.openURL(whatsappUrl);
-        return { success: true, method: 'app' };
-      } else {
-        const webWhatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
-        await Linking.openURL(webWhatsappUrl);
-        return { success: true, method: 'web' };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
+
 
   private async callEmergencyServices(): Promise<any> {
     try {
@@ -180,6 +239,27 @@ export class BareWorkflowEmergencyService {
     if (this.countdownTimer) {
       clearInterval(this.countdownTimer);
       this.countdownTimer = null;
+    }
+  }
+
+  private async sendWhatsAppEmergency(phoneNumber: string, message: string) {
+    try {
+      const formattedNumber = phoneNumber.replace(/\D/g, '');
+      const whatsappNumber = formattedNumber.startsWith('91') ? formattedNumber : `91${formattedNumber}`;
+      
+      const whatsappUrl = `whatsapp://send?phone=${whatsappNumber}&text=${encodeURIComponent(message)}`;
+      
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      if (canOpen) {
+        await Linking.openURL(whatsappUrl);
+        return { success: true, method: 'app' };
+      } else {
+        const webWhatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+        await Linking.openURL(webWhatsappUrl);
+        return { success: true, method: 'web' };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   }
 }

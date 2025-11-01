@@ -32,32 +32,54 @@ export const useLocation = () => {
 
   const getCurrentLocation = async () => {
     try {
-      // Multiple attempts with different accuracy levels
+      // Check if GPS is actually enabled
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        setError('GPS is disabled. Please enable location services in device settings.');
+        return;
+      }
+
+      // Multiple attempts with different accuracy levels and timeouts
       let position;
       
       try {
-        // First try with high accuracy
-        position = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-          maximumAge: 5000,
-        });
-      } catch (highAccuracyError) {
-        try {
-          // Fallback to balanced accuracy
-          position = await Location.getCurrentPositionAsync({
+        // First try: Balanced accuracy with timeout (most reliable)
+        position = await Promise.race([
+          Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Balanced,
             maximumAge: 10000,
-          });
-        } catch (balancedError) {
-          // Final fallback to low accuracy
+          }),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('GPS timeout')), 10000)
+          )
+        ]);
+      } catch (balancedError) {
+        console.log('Balanced accuracy failed, trying low accuracy...');
+        try {
+          // Fallback: Low accuracy (works even with weak GPS)
           position = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Low,
-            maximumAge: 30000,
+            maximumAge: 60000, // Accept older location
           });
+        } catch (lowError) {
+          console.log('Low accuracy failed, trying last known location...');
+          try {
+            // Last resort: Get last known location
+            position = await Location.getLastKnownPositionAsync({
+              maxAge: 300000, // 5 minutes old is acceptable
+            });
+          } catch (lastKnownError) {
+            throw new Error('All location methods failed');
+          }
         }
       }
       
       let address = 'Address lookup in progress...';
+      
+      // Check if position and coords are valid
+      if (!position || !position.coords) {
+        throw new Error('Invalid position data received');
+      }
       
       const locationData = {
         latitude: position.coords.latitude,
@@ -70,23 +92,27 @@ export const useLocation = () => {
       setLocation(locationData);
       setError(null);
       
-      // Try to get address in background
-      try {
-        const reverseGeocode = await Location.reverseGeocodeAsync({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-        
-        if (reverseGeocode && reverseGeocode.length > 0) {
-          const addr = reverseGeocode[0];
-          const fullAddress = `${addr.name || ''} ${addr.street || ''} ${addr.city || ''} ${addr.region || ''} ${addr.postalCode || ''}`.trim();
+      // Try to get address in background (non-blocking)
+      setTimeout(async () => {
+        try {
+          const reverseGeocode = await Location.reverseGeocodeAsync({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
           
-          setLocation(prev => prev ? { ...prev, address: fullAddress } : null);
+          if (reverseGeocode && reverseGeocode.length > 0) {
+            const addr = reverseGeocode[0];
+            const fullAddress = `${addr.name || ''} ${addr.street || ''} ${addr.city || ''} ${addr.region || ''} ${addr.postalCode || ''}`.trim();
+            
+            setLocation(prev => prev ? { ...prev, address: fullAddress || `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}` } : null);
+          } else {
+            setLocation(prev => prev ? { ...prev, address: `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}` } : null);
+          }
+        } catch (geocodeError) {
+          console.log('Reverse geocoding failed, keeping coordinates');
+          setLocation(prev => prev ? { ...prev, address: `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}` } : null);
         }
-      } catch (geocodeError) {
-        console.log('Reverse geocoding failed, using coordinates only');
-        setLocation(prev => prev ? { ...prev, address: `Lat: ${position.coords.latitude.toFixed(4)}, Lng: ${position.coords.longitude.toFixed(4)}` } : null);
-      }
+      }, 1000);
       
       // Log location update
       if (Date.now() - lastLocationLog > 30000) {
@@ -98,16 +124,40 @@ export const useLocation = () => {
       }
     } catch (error: any) {
       console.error('Location error:', error);
-      setError('GPS unavailable - using last known location');
+      setError('GPS signal weak - trying to get approximate location');
       
-      // Set a default location if all fails
-      setLocation({
-        latitude: 0,
-        longitude: 0,
-        accuracy: 0,
-        timestamp: Date.now(),
-        address: 'Location services unavailable'
-      });
+      // Try to use network-based location as final fallback
+      try {
+        const networkPosition = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Lowest, // Use network/WiFi location
+          maximumAge: 300000, // Accept very old location
+        });
+        
+        if (networkPosition && networkPosition.coords) {
+          const locationData = {
+            latitude: networkPosition.coords.latitude,
+            longitude: networkPosition.coords.longitude,
+            accuracy: networkPosition.coords.accuracy || 1000,
+            timestamp: networkPosition.timestamp,
+            address: `Approximate: ${networkPosition.coords.latitude.toFixed(4)}, ${networkPosition.coords.longitude.toFixed(4)}`,
+          };
+          
+          setLocation(locationData);
+          setError('Using approximate location (GPS unstable)');
+        } else {
+          throw new Error('Network position is null');
+        }
+      } catch (networkError) {
+        // Absolute fallback
+        setLocation({
+          latitude: 0,
+          longitude: 0,
+          accuracy: 0,
+          timestamp: Date.now(),
+          address: 'Location unavailable - GPS disabled'
+        });
+        setError('Location unavailable - please enable GPS and restart app');
+      }
     }
   };
 

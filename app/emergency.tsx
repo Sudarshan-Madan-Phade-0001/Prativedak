@@ -69,7 +69,7 @@ export default function EmergencyScreen() {
           
           Alert.alert(
             'Emergency Actions Completed',
-            `✅ SMS sent automatically: ${smsCount}/${results.smsResults.length}\n📞 Emergency call: ${callStatus}\n💬 WhatsApp: ${results.whatsappResult?.success ? 'opened' : 'failed'}`,
+            `✅ SMS sent: ${smsCount}/${results.smsResults.length}\n📞 Emergency call: ${callStatus}\n📱 Messages app used for SMS delivery`,
             [{ text: 'OK' }]
           );
         }

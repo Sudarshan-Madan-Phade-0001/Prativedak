@@ -29,23 +29,19 @@ export class NativeEmergencyService {
   
   static async sendAutomaticSMS(phoneNumber: string, message: string): Promise<boolean> {
     try {
-      console.log(`🔍 Attempting native SMS to ${phoneNumber}`);
-      console.log(`🔍 AutoEmergencyModule exists: ${!!AutoEmergencyModule}`);
+      console.log(`📱 Sending DIRECT SMS to ${phoneNumber}`);
       
       if (AutoEmergencyModule) {
-        console.log('📱 Using NATIVE SMS module');
+        console.log('📱 Using NATIVE SMS module for direct sending');
         const result = await AutoEmergencyModule.sendAutomaticSMS(phoneNumber, message);
-        console.log(`✅ NATIVE SMS sent to ${phoneNumber}`);
+        console.log(`✅ DIRECT SMS sent to ${phoneNumber}`);
         return result;
       } else {
-        console.log('❌ Native module not available - falling back to SMS app');
-        const { Linking } = require('react-native');
-        const smsUrl = `sms:${phoneNumber}?body=${encodeURIComponent(message)}`;
-        await Linking.openURL(smsUrl);
+        console.log('❌ Native module not available');
         return false;
       }
     } catch (error) {
-      console.error('❌ Automatic SMS failed:', error);
+      console.error('❌ Direct SMS failed:', error);
       return false;
     }
   }
@@ -75,15 +71,16 @@ export class NativeEmergencyService {
   static async sendBulkSMS(phoneNumbers: string[], message: string): Promise<number> {
     try {
       if (AutoEmergencyModule) {
+        console.log(`📱 Sending DIRECT bulk SMS to ${phoneNumbers.length} contacts`);
         const successCount = await AutoEmergencyModule.sendBulkSMS(phoneNumbers, message);
-        console.log(`✅ Bulk SMS sent: ${successCount}/${phoneNumbers.length}`);
+        console.log(`✅ DIRECT bulk SMS sent: ${successCount}/${phoneNumbers.length}`);
         return successCount;
       } else {
         console.log('❌ Native module not available');
         return 0;
       }
     } catch (error) {
-      console.error('❌ Bulk SMS failed:', error);
+      console.error('❌ Direct bulk SMS failed:', error);
       return 0;
     }
   }
