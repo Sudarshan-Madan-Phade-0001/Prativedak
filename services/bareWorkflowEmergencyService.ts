@@ -67,83 +67,45 @@ export class BareWorkflowEmergencyService {
 
     let locationText = 'Location: Getting current location...';
     
-    // Try multiple methods to get location
+    // Simple location fallback (works without expo-location)
     try {
-      console.log('📍 Getting location for emergency (multiple attempts)...');
-      const Location = require('expo-location');
+      console.log('📍 Trying to get location...');
       
-      // Check if location services are enabled
-      if (!Location || !Location.hasServicesEnabledAsync) {
-        throw new Error('expo-location not properly linked');
-      }
-      const servicesEnabled = await Location.hasServicesEnabledAsync();
-      if (!servicesEnabled) {
-        locationText = 'Location: GPS disabled - please enable location services';
-      } else {
-        // Request permission
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-          locationText = 'Location: Permission denied';
-        } else {
-          let position = null;
-          
-          // Try multiple accuracy levels
-          try {
-            // First try: High accuracy with timeout
-            position = await Promise.race([
-              Location.getCurrentPositionAsync({ 
-                accuracy: Location.Accuracy.High,
-                maximumAge: 5000 
-              }),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('High accuracy timeout')), 8000))
-            ]);
-          } catch (highError) {
-            console.log('📍 High accuracy failed, trying balanced...');
-            try {
-              // Second try: Balanced accuracy
-              position = await Promise.race([
-                Location.getCurrentPositionAsync({ 
-                  accuracy: Location.Accuracy.Balanced,
-                  maximumAge: 10000 
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Balanced accuracy timeout')), 5000))
-              ]);
-            } catch (balancedError) {
-              console.log('📍 Balanced failed, trying low accuracy...');
-              try {
-                // Third try: Low accuracy (most reliable)
-                position = await Location.getCurrentPositionAsync({ 
-                  accuracy: Location.Accuracy.Low,
-                  maximumAge: 30000 
-                });
-              } catch (lowError) {
-                console.log('📍 All GPS attempts failed');
-              }
-            }
-          }
-          
-          if (position && position.coords && position.coords.latitude && position.coords.longitude) {
-            const lat = position.coords.latitude.toFixed(6);
-            const lng = position.coords.longitude.toFixed(6);
-            const accuracy = position.coords.accuracy || 'unknown';
-            locationText = `Location: ${lat}, ${lng}\nAccuracy: ${accuracy}m\nMap: https://maps.google.com/?q=${lat},${lng}`;
-            console.log(`📍 Location obtained: ${lat}, ${lng} (accuracy: ${accuracy}m)`);
-          } else {
-            throw new Error('No valid coordinates obtained');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('📍 All location methods failed:', error);
-      // Use fallback location if available
+      // Use provided location if available
       if (location && location.latitude !== 0 && location.longitude !== 0) {
         const lat = location.latitude.toFixed(6);
         const lng = location.longitude.toFixed(6);
-        locationText = `Location: ${lat}, ${lng} (cached)\nMap: https://maps.google.com/?q=${lat},${lng}`;
-        console.log(`📍 Using cached location: ${lat}, ${lng}`);
+        locationText = `Location: ${lat}, ${lng}\nMap: https://maps.google.com/?q=${lat},${lng}`;
+        console.log(`📍 Using provided location: ${lat}, ${lng}`);
       } else {
-        locationText = 'Location: GPS unstable - using approximate location\nPlease check GPS settings';
+        // Try expo-location if available
+        try {
+          const Location = require('expo-location');
+          if (Location && Location.getCurrentPositionAsync) {
+            const position = await Location.getCurrentPositionAsync({ 
+              accuracy: Location.Accuracy.Balanced,
+              maximumAge: 10000 
+            });
+            
+            if (position && position.coords) {
+              const lat = position.coords.latitude.toFixed(6);
+              const lng = position.coords.longitude.toFixed(6);
+              locationText = `Location: ${lat}, ${lng}\nMap: https://maps.google.com/?q=${lat},${lng}`;
+              console.log(`📍 Fresh location: ${lat}, ${lng}`);
+            } else {
+              throw new Error('Invalid position');
+            }
+          } else {
+            throw new Error('expo-location not available');
+          }
+        } catch (locationError) {
+          console.log('📍 Location service unavailable:', locationError.message);
+          locationText = 'Location: GPS unavailable - emergency services will use cell tower location';
+        }
       }
+    } catch (error) {
+      console.error('📍 Location error:', error);
+      locationText = 'Location: GPS unavailable - emergency services will use cell tower location';
     }
 
     const emergencyMessage = `🚨 AUTOMATIC EMERGENCY ALERT 🚨\n\nUser: ${user.name}\nTime: ${new Date().toLocaleString()}\n${locationText}\n\nThis is an AUTOMATIC alert from Prativedak Safety App. The user may be in danger and unable to respond.`;
