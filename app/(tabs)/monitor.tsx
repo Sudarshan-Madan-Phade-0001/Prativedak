@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Alert, Linking } from 'react-native';
 import { activityService } from '@/services/activityService';
+import { firebaseService } from '@/services/firebaseService';
 
 export default function MonitorScreen() {
   const { theme } = useTheme();
@@ -27,8 +28,24 @@ export default function MonitorScreen() {
           text: 'Simulate',
           style: 'destructive',
           onPress: async () => {
-            // Log accident simulation
-            await activityService.logActivity({
+            // Save alert to Firebase with location
+            if (user?.id) {
+              await firebaseService.saveAlert({
+                userId: user.id,
+                type: 'emergency',
+                location: {
+                  latitude: location?.latitude || 0,
+                  longitude: location?.longitude || 0,
+                  address: location?.address || 'Unknown location'
+                },
+                timestamp: new Date().toISOString(),
+                sensorData: currentData,
+                status: 'active'
+              });
+            }
+            
+            // Log to local activity service
+            await activityService.logActivityObject({
               type: 'accident_simulation',
               title: 'Accident Simulation Triggered',
               description: 'Emergency protocols activated via simulation',
@@ -42,6 +59,7 @@ export default function MonitorScreen() {
               severity: 'high'
             });
             
+            // Navigate to emergency screen which will handle the countdown and messaging
             router.push('/emergency');
           }
         }
@@ -156,7 +174,7 @@ export default function MonitorScreen() {
             title={isTracking ? "Stop GPS" : "Start GPS"}
             onPress={isTracking ? stopTracking : startTracking}
             variant={isTracking ? "danger" : "success"}
-            icon={isTracking ? "location-off" : "location"}
+            icon={isTracking ? "location" : "location-outline"}
             style={styles.actionButton}
           />
           <Button

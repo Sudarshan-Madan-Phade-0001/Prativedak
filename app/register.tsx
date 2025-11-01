@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,12 +11,38 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
-  const [emergencyContact1, setEmergencyContact1] = useState('');
-  const [emergencyContact2, setEmergencyContact2] = useState('');
+  const [emergencyContact1, setEmergencyContact1] = useState({ name: '', phone: '', relationship: '' });
+  const [emergencyContact2, setEmergencyContact2] = useState({ name: '', phone: '', relationship: '' });
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
+  const scrollViewRef = useRef<ScrollView>(null);
+  
+  const scrollToInput = (inputPosition: number) => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({
+        y: inputPosition,
+        animated: true,
+      });
+    }, 100);
+  };
 
   const handleRegister = async () => {
+    // Basic validation
+    if (!name.trim()) {
+      Alert.alert('Missing Information', 'Please enter your full name.');
+      return;
+    }
+    
+    if (!email.trim()) {
+      Alert.alert('Missing Information', 'Please enter your email address.');
+      return;
+    }
+    
+    if (!password.trim()) {
+      Alert.alert('Missing Information', 'Please enter a password.');
+      return;
+    }
+    
     if (!validatePhone(phone)) {
       Alert.alert('Invalid Phone', 'Please enter a valid 10-digit phone number');
       return;
@@ -26,24 +52,50 @@ export default function RegisterScreen() {
       Alert.alert('Invalid Vehicle Number', 'Please enter a valid vehicle number (e.g., MH12AB1234)');
       return;
     }
+    
+    if (!emergencyContact1.name || !emergencyContact1.phone) {
+      Alert.alert('Missing Emergency Contact', 'Please provide at least one emergency contact.');
+      return;
+    }
 
     setLoading(true);
     try {
-      const emergencyContacts = [emergencyContact1, emergencyContact2].filter(contact => contact.trim());
-      const result = await register({
+      const emergencyContacts = [];
+      if (emergencyContact1.name && emergencyContact1.phone) {
+        emergencyContacts.push({ ...emergencyContact1, priority: 1 });
+      }
+      if (emergencyContact2.name && emergencyContact2.phone) {
+        emergencyContacts.push({ ...emergencyContact2, priority: 2 });
+      }
+      
+      const userData = {
         name,
         email,
         password,
         phone,
         vehicleNumber,
         emergencyContacts
-      });
+      };
+      
+      const result = await register(userData);
       
       if (result.success) {
         Alert.alert('Success', 'Account created successfully! Please login.');
         router.replace('/login');
       } else {
-        Alert.alert('Registration Failed', result.message);
+        // Show specific error message and suggest login if account exists
+        if (result.message.includes('already exists')) {
+          Alert.alert(
+            'Account Already Exists', 
+            result.message,
+            [
+              { text: 'Try Again', style: 'cancel' },
+              { text: 'Login', onPress: () => router.replace('/login') }
+            ]
+          );
+        } else {
+          Alert.alert('Registration Failed', result.message);
+        }
       }
     } catch (error) {
       Alert.alert('Error', 'Registration failed. Please try again.');
@@ -58,7 +110,18 @@ export default function RegisterScreen() {
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
+      <ScrollView 
+        ref={scrollViewRef}
+        style={styles.scrollContainer}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        nestedScrollEnabled={true}
+        enableOnAndroid={true}
+      >
       <View style={styles.header}>
         <View style={styles.iconContainer}>
           <Ionicons name="person-add" size={60} color="#007AFF" />
@@ -77,6 +140,7 @@ export default function RegisterScreen() {
             onChangeText={setName}
             autoCapitalize="words"
             autoComplete="name"
+            onFocus={() => scrollToInput(0)}
           />
         </View>
         
@@ -90,6 +154,7 @@ export default function RegisterScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoComplete="email"
+            onFocus={() => scrollToInput(100)}
           />
         </View>
         
@@ -102,6 +167,7 @@ export default function RegisterScreen() {
             onChangeText={setPassword}
             secureTextEntry
             autoComplete="password-new"
+            onFocus={() => scrollToInput(200)}
           />
         </View>
         
@@ -114,6 +180,7 @@ export default function RegisterScreen() {
             onChangeText={setPhone}
             keyboardType="phone-pad"
             maxLength={10}
+            onFocus={() => scrollToInput(300)}
           />
         </View>
         
@@ -126,36 +193,83 @@ export default function RegisterScreen() {
             onChangeText={setVehicleNumber}
             autoCapitalize="characters"
             maxLength={10}
+            onFocus={() => scrollToInput(400)}
+          />
+        </View>
+        
+        <Text style={styles.sectionTitle}>Emergency Contact 1</Text>
+        <View style={styles.inputContainer}>
+          <Ionicons name="person" size={20} color="#666" style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Contact Name"
+            value={emergencyContact1.name}
+            onChangeText={(text) => setEmergencyContact1({...emergencyContact1, name: text})}
+            onFocus={() => scrollToInput(500)}
           />
         </View>
         
         <View style={styles.inputContainer}>
-          <Ionicons name="people" size={20} color="#666" style={styles.inputIcon} />
+          <Ionicons name="call" size={20} color="#666" style={styles.inputIcon} />
           <TextInput
             style={styles.input}
-            placeholder="Emergency Contact 1"
-            value={emergencyContact1}
-            onChangeText={setEmergencyContact1}
+            placeholder="Phone Number"
+            value={emergencyContact1.phone}
+            onChangeText={(text) => setEmergencyContact1({...emergencyContact1, phone: text})}
             keyboardType="phone-pad"
             maxLength={10}
+            onFocus={() => scrollToInput(600)}
           />
         </View>
         
         <View style={styles.inputContainer}>
-          <Ionicons name="people" size={20} color="#666" style={styles.inputIcon} />
+          <Ionicons name="heart" size={20} color="#666" style={styles.inputIcon} />
           <TextInput
             style={styles.input}
-            placeholder="Emergency Contact 2 (Optional)"
-            value={emergencyContact2}
-            onChangeText={setEmergencyContact2}
-            keyboardType="phone-pad"
-            maxLength={10}
+            placeholder="Relationship (e.g., Father, Mother)"
+            value={emergencyContact1.relationship}
+            onChangeText={(text) => setEmergencyContact1({...emergencyContact1, relationship: text})}
+            onFocus={() => scrollToInput(700)}
           />
         </View>
         
-        <View style={styles.passwordNote}>
-          <Text style={styles.noteText}>Password must be at least 5 characters (letters, numbers, or symbols)</Text>
+        <Text style={styles.sectionTitle}>Emergency Contact 2 (Optional)</Text>
+        <View style={styles.inputContainer}>
+          <Ionicons name="person" size={20} color="#666" style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Contact Name"
+            value={emergencyContact2.name}
+            onChangeText={(text) => setEmergencyContact2({...emergencyContact2, name: text})}
+            onFocus={() => scrollToInput(800)}
+          />
         </View>
+        
+        <View style={styles.inputContainer}>
+          <Ionicons name="call" size={20} color="#666" style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Phone Number"
+            value={emergencyContact2.phone}
+            onChangeText={(text) => setEmergencyContact2({...emergencyContact2, phone: text})}
+            keyboardType="phone-pad"
+            maxLength={10}
+            onFocus={() => scrollToInput(900)}
+          />
+        </View>
+        
+        <View style={styles.inputContainer}>
+          <Ionicons name="heart" size={20} color="#666" style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Relationship (e.g., Brother, Sister)"
+            value={emergencyContact2.relationship}
+            onChangeText={(text) => setEmergencyContact2({...emergencyContact2, relationship: text})}
+            onFocus={() => scrollToInput(1000)}
+          />
+        </View>
+        
+
         
         <TouchableOpacity 
           style={[styles.button, loading && styles.buttonDisabled]} 
@@ -175,6 +289,7 @@ export default function RegisterScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -183,6 +298,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
+  },
+  scrollContainer: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 50,
   },
   header: {
     flex: 1,
@@ -222,6 +344,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
+    minHeight: 600,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -278,6 +401,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 24,
     backgroundColor: '#fff',
+    marginTop: 'auto',
   },
   linkText: {
     textAlign: 'center',
@@ -287,5 +411,12 @@ const styles = StyleSheet.create({
   link: {
     color: '#007AFF',
     fontWeight: '600',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+    marginTop: 8,
   },
 });

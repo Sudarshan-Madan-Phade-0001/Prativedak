@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Alert, TouchableOpacity, Switch, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -15,6 +15,27 @@ export default function ProfileScreen() {
   const [name, setName] = useState(user?.name || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [vehicleNumber, setVehicleNumber] = useState(user?.vehicleNumber || '');
+  
+  // Update state when user data changes
+  useEffect(() => {
+    if (user) {
+      setName(user.name || '');
+      setPhone(user.phone || '');
+      setVehicleNumber(user.vehicleNumber || '');
+      setEmergencyContact1({
+        name: user.emergencyContacts?.[0]?.name || '',
+        phone: user.emergencyContacts?.[0]?.phone || '',
+        relationship: user.emergencyContacts?.[0]?.relationship || '',
+        priority: 1
+      });
+      setEmergencyContact2({
+        name: user.emergencyContacts?.[1]?.name || '',
+        phone: user.emergencyContacts?.[1]?.phone || '',
+        relationship: user.emergencyContacts?.[1]?.relationship || '',
+        priority: 2
+      });
+    }
+  }, [user]);
   const [emergencyContact1, setEmergencyContact1] = useState({
     name: user?.emergencyContacts?.[0]?.name || '',
     phone: user?.emergencyContacts?.[0]?.phone || '',
@@ -94,7 +115,11 @@ export default function ProfileScreen() {
   ];
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
+    <ScrollView 
+      style={[styles.container, { backgroundColor: theme.background }]}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.header}>
         <Ionicons name="person" size={32} color={theme.primary} />
         <Text style={[styles.title, { color: theme.text }]}>Profile</Text>
@@ -413,6 +438,8 @@ export default function ProfileScreen() {
         </View>
       )}
 
+
+      
       <Button
         title="Logout"
         onPress={handleLogout}
@@ -561,5 +588,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginLeft: 16,
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 100,
   },
 });

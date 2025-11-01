@@ -1,230 +1,259 @@
-import { Accelerometer, Gyroscope } from 'expo-sensors';
-import * as Location from 'expo-location';
-import * as TaskManager from 'expo-task-manager';
-import { activityService } from './activityService';
+import { Accelerometer, Gyroscope, Magnetometer } from 'expo-sensors';
 
-interface SensorData {
-  accelerometer: { x: number; y: number; z: number };
-  gyroscope: { x: number; y: number; z: number };
-  location: { latitude: number; longitude: number; speed: number | null };
+export interface SensorData {
+  accelerometer: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  gyroscope: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  magnetometer: {
+    x: number;
+    y: number;
+    z: number;
+  };
   timestamp: number;
 }
 
-interface AccidentThresholds {
-  acceleration: number; // G-force threshold
-  gyroscope: number; // Angular velocity threshold
-  speed: number; // Speed threshold for impact detection
+export interface AccidentDetectionResult {
+  isAccident: boolean;
+  confidence: number;
+  type: 'collision' | 'rollover' | 'sudden_stop' | 'none';
+  severity: 'low' | 'medium' | 'high';
 }
-
-const BACKGROUND_TASK = 'sensor-monitoring';
-const ACCIDENT_THRESHOLDS: AccidentThresholds = {
-  acceleration: 2.5, // 2.5G sudden change
-  gyroscope: 5.0, // 5 rad/s angular velocity
-  speed: 20, // 20 km/h speed change
-};
 
 class SensorService {
-  private isMonitoring = false;
   private accelerometerSubscription: any = null;
   private gyroscopeSubscription: any = null;
-  private locationSubscription: any = null;
-  private sensorData: SensorData[] = [];
-  private lastSensorReading: Partial<SensorData> = {};
-  private accidentCallback?: (data: SensorData) => void;
+  private magnetometerSubscription: any = null;
+  
+  private currentData: SensorData = {
+    accelerometer: { x: 0, y: 0, z: 0 },
+    gyroscope: { x: 0, y: 0, z: 0 },
+    magnetometer: { x: 0, y: 0, z: 0 },
+    timestamp: Date.now()
+  };
 
-  async startMonitoring(onAccidentDetected?: (data: SensorData) => void) {
-    if (this.isMonitoring) return;
+  private listeners: ((data: SensorData) => void)[] = [];
+  private accidentListeners: ((result: AccidentDetectionResult) => void)[] = [];
+  
+  // Accident detection thresholds
+  private readonly THRESHOLDS = {
+    COLLISION_ACCELERATION: 15, // m/s²
+    ROLLOVER_GYROSCOPE: 3, // rad/s
+    SUDDEN_STOP_ACCELERATION: 12 // m/s²
+  };
 
-    this.accidentCallback = onAccidentDetected;
-    
-    // Request permissions
-    const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
-    if (locationStatus !== 'granted') {
-      throw new Error('Location permission required');
+  // Start monitoring sensors
+  async startMonitoring(): Promise<boolean> {
+    try {
+      // Set update intervals
+      Accelerometer.setUpdateInterval(100); // 10Hz
+      Gyroscope.setUpdateInterval(100);
+      Magnetometer.setUpdateInterval(100);
+
+      // Subscribe to accelerometer
+      this.accelerometerSubscription = Accelerometer.addListener(({ x, y, z }) => {
+        this.currentData.accelerometer = { x, y, z };
+        this.currentData.timestamp = Date.now();
+        this.notifyListeners();
+        this.checkForAccident();
+      });
+
+      // Subscribe to gyroscope
+      this.gyroscopeSubscription = Gyroscope.addListener(({ x, y, z }) => {
+        this.currentData.gyroscope = { x, y, z };
+        this.notifyListeners();
+      });
+
+      // Subscribe to magnetometer
+      this.magnetometerSubscription = Magnetometer.addListener(({ x, y, z }) => {
+        this.currentData.magnetometer = { x, y, z };
+        this.notifyListeners();
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Failed to start sensor monitoring:', error);
+      return false;
     }
-
-    // Set sensor update intervals
-    Accelerometer.setUpdateInterval(100); // 10Hz
-    Gyroscope.setUpdateInterval(100); // 10Hz
-
-    // Start accelerometer monitoring
-    this.accelerometerSubscription = Accelerometer.addListener(accelerometerData => {
-      this.handleAccelerometerData(accelerometerData);
-    });
-
-    // Start gyroscope monitoring
-    this.gyroscopeSubscription = Gyroscope.addListener(gyroscopeData => {
-      this.handleGyroscopeData(gyroscopeData);
-    });
-
-    // Start location monitoring
-    this.locationSubscription = await Location.watchPositionAsync(
-      {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 1000,
-        distanceInterval: 1,
-      },
-      locationData => {
-        this.handleLocationData(locationData);
-      }
-    );
-
-    this.isMonitoring = true;
-    await this.registerBackgroundTask();
-    
-    // Log activity
-    await activityService.logActivity({
-      type: 'monitoring_start',
-      title: 'Sensor Monitoring Started',
-      description: 'Accelerometer and Gyroscope monitoring activated',
-      detail: 'Thresholds: 2.5G acceleration, 5.0 rad/s rotation'
-    });
   }
 
-  stopMonitoring() {
-    if (!this.isMonitoring) return;
-
-    this.accelerometerSubscription?.remove();
-    this.gyroscopeSubscription?.remove();
-    this.locationSubscription?.remove();
+  // Stop monitoring sensors
+  stopMonitoring(): void {
+    if (this.accelerometerSubscription) {
+      this.accelerometerSubscription.remove();
+      this.accelerometerSubscription = null;
+    }
     
-    this.accelerometerSubscription = null;
-    this.gyroscopeSubscription = null;
-    this.locationSubscription = null;
-    this.isMonitoring = false;
+    if (this.gyroscopeSubscription) {
+      this.gyroscopeSubscription.remove();
+      this.gyroscopeSubscription = null;
+    }
     
-    // Log activity
-    activityService.logActivity({
-      type: 'monitoring_stop',
-      title: 'Sensor Monitoring Stopped',
-      description: 'All sensor monitoring has been deactivated'
-    });
+    if (this.magnetometerSubscription) {
+      this.magnetometerSubscription.remove();
+      this.magnetometerSubscription = null;
+    }
   }
 
-  private handleAccelerometerData(data: { x: number; y: number; z: number }) {
-    this.lastSensorReading.accelerometer = data;
-    this.lastSensorReading.timestamp = Date.now();
+  // Get current sensor data
+  getCurrentData(): SensorData {
+    return { ...this.currentData };
+  }
+
+  // Add data listener
+  addListener(callback: (data: SensorData) => void): void {
+    this.listeners.push(callback);
+  }
+
+  // Remove data listener
+  removeListener(callback: (data: SensorData) => void): void {
+    this.listeners = this.listeners.filter(listener => listener !== callback);
+  }
+
+  // Add accident detection listener
+  addAccidentListener(callback: (result: AccidentDetectionResult) => void): void {
+    this.accidentListeners.push(callback);
+  }
+
+  // Remove accident detection listener
+  removeAccidentListener(callback: (result: AccidentDetectionResult) => void): void {
+    this.accidentListeners = this.accidentListeners.filter(listener => listener !== callback);
+  }
+
+  // Notify all listeners
+  private notifyListeners(): void {
+    this.listeners.forEach(listener => listener(this.currentData));
+  }
+
+  // Notify accident listeners
+  private notifyAccidentListeners(result: AccidentDetectionResult): void {
+    this.accidentListeners.forEach(listener => listener(result));
+  }
+
+  // Check for accident based on sensor data
+  private checkForAccident(): void {
+    const { accelerometer, gyroscope } = this.currentData;
     
     // Calculate total acceleration magnitude
-    const magnitude = Math.sqrt(data.x ** 2 + data.y ** 2 + data.z ** 2);
+    const totalAcceleration = Math.sqrt(
+      accelerometer.x ** 2 + accelerometer.y ** 2 + accelerometer.z ** 2
+    );
     
-    // Detect sudden acceleration changes (potential impact)
-    if (magnitude > ACCIDENT_THRESHOLDS.acceleration) {
-      this.checkForAccident();
-    }
-    
-    this.storeSensorData();
-  }
+    // Calculate total gyroscope magnitude
+    const totalGyroscope = Math.sqrt(
+      gyroscope.x ** 2 + gyroscope.y ** 2 + gyroscope.z ** 2
+    );
 
-  private handleGyroscopeData(data: { x: number; y: number; z: number }) {
-    this.lastSensorReading.gyroscope = data;
-    
-    // Calculate angular velocity magnitude
-    const magnitude = Math.sqrt(data.x ** 2 + data.y ** 2 + data.z ** 2);
-    
-    // Detect sudden rotation (vehicle flip/roll)
-    if (magnitude > ACCIDENT_THRESHOLDS.gyroscope) {
-      this.checkForAccident();
-    }
-  }
-
-  private handleLocationData(locationData: Location.LocationObject) {
-    const speed = locationData.coords.speed ? locationData.coords.speed * 3.6 : null; // Convert m/s to km/h
-    
-    this.lastSensorReading.location = {
-      latitude: locationData.coords.latitude,
-      longitude: locationData.coords.longitude,
-      speed,
+    let result: AccidentDetectionResult = {
+      isAccident: false,
+      confidence: 0,
+      type: 'none',
+      severity: 'low'
     };
 
-    // Check for sudden speed changes
-    if (speed && this.sensorData.length > 0) {
-      const lastSpeed = this.sensorData[this.sensorData.length - 1].location.speed;
-      if (lastSpeed && Math.abs(speed - lastSpeed) > ACCIDENT_THRESHOLDS.speed) {
-        this.checkForAccident();
-      }
+    // Check for collision (high acceleration)
+    if (totalAcceleration > this.THRESHOLDS.COLLISION_ACCELERATION) {
+      result = {
+        isAccident: true,
+        confidence: Math.min(totalAcceleration / this.THRESHOLDS.COLLISION_ACCELERATION, 1),
+        type: 'collision',
+        severity: totalAcceleration > 20 ? 'high' : totalAcceleration > 17 ? 'medium' : 'low'
+      };
+    }
+    
+    // Check for rollover (high rotation)
+    else if (totalGyroscope > this.THRESHOLDS.ROLLOVER_GYROSCOPE) {
+      result = {
+        isAccident: true,
+        confidence: Math.min(totalGyroscope / this.THRESHOLDS.ROLLOVER_GYROSCOPE, 1),
+        type: 'rollover',
+        severity: totalGyroscope > 5 ? 'high' : totalGyroscope > 4 ? 'medium' : 'low'
+      };
+    }
+    
+    // Check for sudden stop (negative acceleration)
+    else if (accelerometer.z < -this.THRESHOLDS.SUDDEN_STOP_ACCELERATION) {
+      result = {
+        isAccident: true,
+        confidence: Math.min(Math.abs(accelerometer.z) / this.THRESHOLDS.SUDDEN_STOP_ACCELERATION, 1),
+        type: 'sudden_stop',
+        severity: Math.abs(accelerometer.z) > 15 ? 'high' : Math.abs(accelerometer.z) > 13 ? 'medium' : 'low'
+      };
+    }
+
+    // Only notify if accident detected
+    if (result.isAccident) {
+      this.notifyAccidentListeners(result);
     }
   }
 
-  private checkForAccident() {
-    if (this.isCompleteReading(this.lastSensorReading)) {
-      const sensorData = this.lastSensorReading as SensorData;
-      
-      try {
-        // Additional validation logic
-        const accMagnitude = Math.sqrt(
-          (sensorData.accelerometer?.x || 0) ** 2 + 
-          (sensorData.accelerometer?.y || 0) ** 2 + 
-          (sensorData.accelerometer?.z || 0) ** 2
-        );
-        
-        const gyroMagnitude = Math.sqrt(
-          (sensorData.gyroscope?.x || 0) ** 2 + 
-          (sensorData.gyroscope?.y || 0) ** 2 + 
-          (sensorData.gyroscope?.z || 0) ** 2
-        );
-
-        // Trigger accident if multiple thresholds are exceeded
-        if (accMagnitude > ACCIDENT_THRESHOLDS.acceleration || 
-            gyroMagnitude > ACCIDENT_THRESHOLDS.gyroscope) {
-          this.accidentCallback?.(sensorData);
-        }
-      } catch (error) {
-        console.error('Error in accident detection:', error);
-      }
-    }
-  }
-
-  private storeSensorData() {
-    if (this.isCompleteReading(this.lastSensorReading)) {
-      this.sensorData.push({ ...this.lastSensorReading } as SensorData);
-      
-      // Keep only last 100 readings to manage memory
-      if (this.sensorData.length > 100) {
-        this.sensorData = this.sensorData.slice(-100);
-      }
-    }
-  }
-
-  private isCompleteReading(data: Partial<SensorData>): data is SensorData {
-    return !!(data.accelerometer && data.gyroscope && data.location && data.timestamp);
-  }
-
-  private async registerBackgroundTask() {
+  // Check sensor availability
+  async checkSensorAvailability(): Promise<{
+    accelerometer: boolean;
+    gyroscope: boolean;
+    magnetometer: boolean;
+  }> {
     try {
-      // Background task registration for future implementation
-      console.log('Background monitoring ready');
+      const [accelAvailable, gyroAvailable, magAvailable] = await Promise.all([
+        Accelerometer.isAvailableAsync(),
+        Gyroscope.isAvailableAsync(),
+        Magnetometer.isAvailableAsync()
+      ]);
+
+      return {
+        accelerometer: accelAvailable,
+        gyroscope: gyroAvailable,
+        magnetometer: magAvailable
+      };
     } catch (error) {
-      console.error('Failed to register background task:', error);
+      console.error('Error checking sensor availability:', error);
+      return {
+        accelerometer: false,
+        gyroscope: false,
+        magnetometer: false
+      };
     }
   }
 
-  getCurrentSensorData(): SensorData | null {
-    return this.sensorData.length > 0 ? this.sensorData[this.sensorData.length - 1] : null;
-  }
-
-  getSensorHistory(): SensorData[] {
-    return [...this.sensorData];
-  }
-
-  getMonitoringStatus(): boolean {
-    return this.isMonitoring;
-  }
-
-  updateThresholds(thresholds: Partial<AccidentThresholds>) {
-    Object.assign(ACCIDENT_THRESHOLDS, thresholds);
+  // Simulate accident for testing
+  simulateAccident(type: 'collision' | 'rollover' | 'sudden_stop' = 'collision'): void {
+    let mockResult: AccidentDetectionResult;
+    
+    switch (type) {
+      case 'collision':
+        mockResult = {
+          isAccident: true,
+          confidence: 0.9,
+          type: 'collision',
+          severity: 'high'
+        };
+        break;
+      case 'rollover':
+        mockResult = {
+          isAccident: true,
+          confidence: 0.85,
+          type: 'rollover',
+          severity: 'high'
+        };
+        break;
+      case 'sudden_stop':
+        mockResult = {
+          isAccident: true,
+          confidence: 0.8,
+          type: 'sudden_stop',
+          severity: 'medium'
+        };
+        break;
+    }
+    
+    this.notifyAccidentListeners(mockResult);
   }
 }
 
-// Background task definition
-TaskManager.defineTask(BACKGROUND_TASK, () => {
-  try {
-    // Background sensor monitoring logic
-    console.log('Background task executed');
-  } catch (error) {
-    console.error('Background task error:', error);
-  }
-});
-
 export const sensorService = new SensorService();
-export type { SensorData, AccidentThresholds };

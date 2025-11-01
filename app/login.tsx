@@ -11,13 +11,30 @@ export default function LoginScreen() {
   const { login } = useAuth();
 
   const handleLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Missing Information', 'Please enter both email and password.');
+      return;
+    }
+    
     setLoading(true);
     try {
       const result = await login(email, password);
       if (result.success) {
         router.replace('/(tabs)');
       } else {
-        Alert.alert('Login Failed', result.message);
+        // Show specific error message and suggest signup if account not found
+        if (result.message.includes('Account not found')) {
+          Alert.alert(
+            'Account Not Found', 
+            result.message,
+            [
+              { text: 'Try Again', style: 'cancel' },
+              { text: 'Sign Up', onPress: () => router.push('/register') }
+            ]
+          );
+        } else {
+          Alert.alert('Login Failed', result.message);
+        }
       }
     } catch (error) {
       Alert.alert('Error', 'Login failed. Please try again.');

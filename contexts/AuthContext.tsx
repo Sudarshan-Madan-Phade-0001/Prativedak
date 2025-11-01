@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 import { authService } from '@/services/authService';
 
 interface EmergencyContact {
@@ -62,8 +63,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAuthenticated(authenticated);
       setIsFirstTime(!hasOnboarded);
       setUser(currentUser);
+      
+      // If no user but claims to be authenticated, reset state
+      if (authenticated && !currentUser) {
+        setIsAuthenticated(false);
+      }
     } catch (error) {
       console.error('Auth check failed:', error);
+      setIsAuthenticated(false);
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -95,9 +103,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    await authService.logout();
-    setIsAuthenticated(false);
-    setUser(null);
+    try {
+      await authService.logout();
+      setIsAuthenticated(false);
+      setUser(null);
+      // Force navigation to login immediately
+      router.replace('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Force clear state even on error
+      setIsAuthenticated(false);
+      setUser(null);
+      router.replace('/login');
+    }
   };
 
   const completeOnboarding = async () => {

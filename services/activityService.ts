@@ -1,98 +1,108 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-interface ActivityLog {
+export interface ActivityLog {
   id: string;
-  type: 'monitoring_start' | 'monitoring_stop' | 'gps_start' | 'gps_stop' | 'location_update' | 'sensor_data' | 'accident_simulation';
-  title: string;
-  description: string;
-  detail?: string;
-  timestamp: number;
+  type: 'movement' | 'location' | 'sensor' | 'accident_simulation' | 'monitoring_start' | 'monitoring_stop' | 'gps_start' | 'gps_stop' | 'sensor_data';
+  message: string;
+  timestamp: Date;
   data?: any;
+  title?: string;
+  description?: string;
+  detail?: string;
 }
 
-interface AlertLog {
+export interface AlertLog {
   id: string;
-  type: 'simulation' | 'speed_alert' | 'impact_detected' | 'system_status';
+  type: 'emergency' | 'warning' | 'info' | 'simulation';
   message: string;
+  timestamp: Date;
+  resolved: boolean;
+  severity?: string;
   description?: string;
-  severity: 'low' | 'medium' | 'high';
-  timestamp: number;
 }
 
 class ActivityService {
-  private readonly ACTIVITY_KEY = 'app_activity_logs';
-  private readonly ALERTS_KEY = 'app_alert_logs';
+  private activities: ActivityLog[] = [];
+  private alerts: AlertLog[] = [];
 
-  async logActivity(activity: Omit<ActivityLog, 'id' | 'timestamp'>): Promise<void> {
-    try {
-      const activities = await this.getActivities();
-      const newActivity: ActivityLog = {
-        ...activity,
-        id: Date.now().toString(),
-        timestamp: Date.now()
-      };
-      
-      activities.unshift(newActivity);
-      
-      // Keep only last 100 activities
-      if (activities.length > 100) {
-        activities.splice(100);
-      }
-      
-      await AsyncStorage.setItem(this.ACTIVITY_KEY, JSON.stringify(activities));
-    } catch (error) {
-      console.error('Failed to log activity:', error);
+  // Activity logging
+  logActivity(type: ActivityLog['type'], message: string, data?: any): void {
+    const activity: ActivityLog = {
+      id: Date.now().toString(),
+      type,
+      message,
+      timestamp: new Date(),
+      data
+    };
+    
+    this.activities.unshift(activity);
+    
+    // Keep only last 100 activities
+    if (this.activities.length > 100) {
+      this.activities = this.activities.slice(0, 100);
     }
   }
 
-  async logAlert(alert: Omit<AlertLog, 'id' | 'timestamp'>): Promise<void> {
-    try {
-      const alerts = await this.getAlerts();
-      const newAlert: AlertLog = {
-        ...alert,
-        id: Date.now().toString(),
-        timestamp: Date.now()
-      };
-      
-      alerts.unshift(newAlert);
-      
-      // Keep only last 50 alerts
-      if (alerts.length > 50) {
-        alerts.splice(50);
-      }
-      
-      await AsyncStorage.setItem(this.ALERTS_KEY, JSON.stringify(alerts));
-    } catch (error) {
-      console.error('Failed to log alert:', error);
+  // Log activity with object interface (async version)
+  async logActivityObject(activity: { type: string; title: string; description: string; detail?: string }): Promise<void> {
+    this.logActivity(activity.type as any, activity.title, { description: activity.description, detail: activity.detail });
+  }
+
+  getActivities(): ActivityLog[] {
+    return this.activities;
+  }
+
+  // Alert management
+  createAlert(type: AlertLog['type'], message: string): string {
+    const alert: AlertLog = {
+      id: Date.now().toString(),
+      type,
+      message,
+      timestamp: new Date(),
+      resolved: false
+    };
+    
+    this.alerts.unshift(alert);
+    return alert.id;
+  }
+
+  // Log alert with object interface (async version)
+  async logAlert(alert: { type: string; message: string; description?: string; severity?: string }): Promise<string> {
+    const alertLog: AlertLog = {
+      id: Date.now().toString(),
+      type: alert.type as any,
+      message: alert.message,
+      timestamp: new Date(),
+      resolved: false,
+      severity: alert.severity || 'medium',
+      description: alert.description
+    };
+    
+    this.alerts.unshift(alertLog);
+    return alertLog.id;
+  }
+
+  getAlerts(): AlertLog[] {
+    return this.alerts;
+  }
+
+  resolveAlert(id: string): void {
+    const alert = this.alerts.find(a => a.id === id);
+    if (alert) {
+      alert.resolved = true;
     }
   }
 
-  async getActivities(): Promise<ActivityLog[]> {
-    try {
-      const data = await AsyncStorage.getItem(this.ACTIVITY_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      return [];
-    }
+  getUnresolvedAlerts(): AlertLog[] {
+    return this.alerts.filter(alert => !alert.resolved);
   }
 
-  async getAlerts(): Promise<AlertLog[]> {
-    try {
-      const data = await AsyncStorage.getItem(this.ALERTS_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      return [];
-    }
+  // Clear data
+  clearActivities(): void {
+    this.activities = [];
   }
 
-  async clearLogs(): Promise<void> {
-    try {
-      await AsyncStorage.multiRemove([this.ACTIVITY_KEY, this.ALERTS_KEY]);
-    } catch (error) {
-      console.error('Failed to clear logs:', error);
-    }
+  clearAlerts(): void {
+    this.alerts = [];
   }
 }
 
 export const activityService = new ActivityService();
-export type { ActivityLog, AlertLog };

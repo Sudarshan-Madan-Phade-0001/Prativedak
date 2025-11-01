@@ -21,9 +21,9 @@ export default function ActivityScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
-    const activities = await activityService.getActivities();
-    const alerts = await activityService.getAlerts();
+  const loadData = () => {
+    const activities = activityService.getActivities();
+    const alerts = activityService.getAlerts();
     setActivityData(activities);
     setAlertsData(alerts);
   };
@@ -140,18 +140,18 @@ export default function ActivityScreen() {
                   />
                   <View style={styles.itemText}>
                     <Text style={[styles.itemTitle, { color: theme.text }]}>
-                      {item.title}
+                      {item.message}
                     </Text>
                     <Text style={[styles.itemDetail, { color: theme.textSecondary }]}>
-                      {item.description}
+                      Type: {item.type.replace('_', ' ').toUpperCase()}
                     </Text>
-                    {item.detail && (
+                    {item.data && (
                       <Text style={[styles.itemSubDetail, { color: theme.textSecondary }]}>
-                        {item.detail}
+                        {JSON.stringify(item.data, null, 2).replace(/[{}"]/g, '').replace(/,/g, ', ')}
                       </Text>
                     )}
                     <Text style={[styles.itemDate, { color: theme.textSecondary }]}>
-                      {formatTime(item.timestamp)} • {new Date(item.timestamp).toLocaleTimeString()}
+                      {formatTime(new Date(item.timestamp).getTime())} • {new Date(item.timestamp).toLocaleTimeString()}
                     </Text>
                   </View>
                 </View>
@@ -191,11 +191,11 @@ export default function ActivityScreen() {
                     <View style={styles.alertMeta}>
                       <View style={[styles.severityBadge, { backgroundColor: getColor(alert.type, alert.severity) + '20' }]}>
                         <Text style={[styles.severityText, { color: getColor(alert.type, alert.severity) }]}>
-                          {alert.severity.toUpperCase()}
+                          {(alert.severity || 'medium').toUpperCase()}
                         </Text>
                       </View>
                       <Text style={[styles.itemDate, { color: theme.textSecondary }]}>
-                        {formatTime(alert.timestamp)}
+                        {formatTime(new Date(alert.timestamp).getTime())}
                       </Text>
                     </View>
                   </View>

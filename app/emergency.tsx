@@ -5,17 +5,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from '@/hooks/useLocation';
 import * as Location from 'expo-location';
+import { emergencyService } from '@/services/emergencyService';
+import { bareWorkflowEmergencyService } from '@/services/bareWorkflowEmergencyService';
+import { NativeCallService } from '@/services/nativeCallService';
+import { NativeAutoSmsService } from '@/services/nativeAutoSmsService';
 
 export default function EmergencyScreen() {
   const { user } = useAuth();
-  const { location, startTracking } = useLocation();
+  const { location } = useLocation();
   const [countdown, setCountdown] = useState(30);
   const [isCancelled, setIsCancelled] = useState(false);
+  const [emergencySent, setEmergencySent] = useState(false);
+  const [emergencyResults, setEmergencyResults] = useState<any>(null);
+  const [isBareWorkflow, setIsBareWorkflow] = useState(true); // Set to true for bare workflow
   const [currentLocation, setCurrentLocation] = useState<any>(null);
 
   // Get current location when component mounts
   useEffect(() => {
     getCurrentLocation();
+    startEmergencyCountdown();
   }, []);
 
   const getCurrentLocation = async () => {
@@ -35,28 +43,45 @@ export default function EmergencyScreen() {
     }
   };
 
-  useEffect(() => {
-    if (countdown > 0 && !isCancelled) {
-      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (countdown === 0 && !isCancelled) {
-      handleAutoEmergencySequence();
+  const startEmergencyCountdown = () => {
+    const locationData = currentLocation || location;
+    
+    if (isBareWorkflow) {
+      // Use bare workflow service for automatic actions
+      bareWorkflowEmergencyService.triggerFullEmergencySequence(
+        user,
+        locationData,
+        (seconds) => setCountdown(seconds),
+        (results) => {
+          setEmergencySent(true);
+          setEmergencyResults(results);
+          
+          const smsCount = results.smsResults.filter((r: any) => r.success).length;
+          const callStatus = results.callResult?.automatic ? 'automatically made' : 'dialer opened';
+          
+          Alert.alert(
+            'Emergency Actions Completed',
+            `✅ SMS sent automatically: ${smsCount}/${results.smsResults.length}\n📞 Emergency call: ${callStatus}\n💬 WhatsApp: ${results.whatsappResult?.success ? 'opened' : 'failed'}`,
+            [{ text: 'OK' }]
+          );
+        }
+      );
+    } else {
+      // Fallback to regular service for Expo Go
+      emergencyService.triggerEmergencyAlert(
+        user,
+        locationData,
+        (seconds) => setCountdown(seconds),
+        () => {
+          setEmergencySent(true);
+          Alert.alert(
+            'Emergency Messages Sent',
+            'SMS and WhatsApp messages have been sent to your emergency contacts.',
+            [{ text: 'OK' }]
+          );
+        }
+      );
     }
-  }, [countdown, isCancelled]);
-
-  const handleAutoEmergencySequence = async () => {
-    // Step 1: Call immediately
-    callEmergencyContacts();
-    
-    // Step 2: Send SMS after 3 seconds
-    setTimeout(() => {
-      sendSMSToEmergencyContacts();
-    }, 3000);
-    
-    // Step 3: Send WhatsApp after 6 seconds
-    setTimeout(() => {
-      sendWhatsAppAlert();
-    }, 6000);
   };
 
   const handleEmergencyCall = () => {
@@ -69,66 +94,111 @@ export default function EmergencyScreen() {
 
   const handleCancel = () => {
     setIsCancelled(true);
+    
+    if (isBareWorkflow) {
+      bareWorkflowEmergencyService.cancelEmergencySequence();
+    } else {
+      emergencyService.cancelEmergencyAlert();
+    }
+    
     Alert.alert(
       'Emergency Cancelled',
-      'Emergency call has been cancelled. Stay safe!',
+      'Emergency sequence has been cancelled. Stay safe!',
       [{ text: 'OK', onPress: () => router.back() }]
     );
   };
 
-  const handleCallNow = () => {
+  const handleCallNow = async () => {
     setIsCancelled(true);
-    callEmergencyContacts();
+    
+    if (isBareWorkflow) {
+      bareWorkflowEmergencyService.cancelEmergencySequence();
+    } else {
+      emergencyService.cancelEmergencyAlert();
+    }
+    
+    await callEmergencyContacts();
   };
 
-  const callEmergencyContacts = () => {
+  const callEmergencyContacts = async () => {
     if (user?.emergencyContacts?.length) {
-      // Sort by priority and call in order
-      const sortedContacts = [...user.emergencyContacts].sort((a, b) => a.priority - b.priority);
+      const primaryContact = user.emergencyContacts.sort((a, b) => a.priority - b.priority)[0];
       
-      if (sortedContacts[0]?.phone) {
-        Linking.openURL(`tel:${sortedContacts[0].phone}`);
+      if (isBareWorkflow) {
+        // Automatic call in bare workflow
+        const success = await NativeCallService.makeEmergencyCall(primaryContact.phone);
+        Alert.alert(
+          'Emergency Call',
+          success ? 'Emergency call made automatically!' : 'Dialer opened - please tap call',
+          [{ text: 'OK' }]
+        );
+      } else {
+        // Regular dialer for Expo Go
+        Linking.openURL(`tel:${primaryContact.phone}`);
       }
     } else {
-      // Default to emergency services
-      Linking.openURL('tel:112');
+      if (isBareWorkflow) {
+        const success = await NativeCallService.makeEmergencyCall('112');
+        Alert.alert(
+          'Emergency Services',
+          success ? 'Emergency call made automatically!' : 'Dialer opened - please tap call',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Linking.openURL('tel:112');
+      }
     }
   };
 
-  const sendSMSToEmergencyContacts = () => {
+  const sendSMSToEmergencyContacts = async () => {
     if (user?.emergencyContacts?.length) {
-      const loc = currentLocation || location;
-      const locationText = loc ? `https://maps.google.com/?q=${loc.latitude},${loc.longitude}` : 'Location unavailable';
-      const message = `🚨 EMERGENCY: ${user.name} has been in an accident. Location: ${locationText}`;
+      const locationData = currentLocation || location;
+      const message = `🚨 MANUAL EMERGENCY ALERT 🚨\n\nUser: ${user.name}\nTime: ${new Date().toLocaleString()}\nLocation: ${locationData ? `https://maps.google.com/?q=${locationData.latitude},${locationData.longitude}` : 'Unknown'}\n\nManual emergency alert from Prativedak Safety App.`;
       
-      user.emergencyContacts.forEach(contact => {
-        if (contact?.phone) {
-          const phoneNumber = contact.phone.replace(/\D/g, ''); // Remove non-digits
-          const smsUrl = `sms:+91${phoneNumber}?body=${encodeURIComponent(message)}`;
-          Linking.openURL(smsUrl).catch(err => {
-            console.error('Failed to send SMS:', err);
-            // Fallback without country code
-            Linking.openURL(`sms:${phoneNumber}?body=${encodeURIComponent(message)}`);
-          });
+      if (isBareWorkflow) {
+        // Automatic SMS sending in bare workflow
+        const sentCount = await NativeAutoSmsService.sendBulkEmergencySMS(user.emergencyContacts, message);
+        Alert.alert(
+          'SMS Results',
+          `Automatic SMS sent: ${sentCount}/${user.emergencyContacts.length} contacts`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        // Fallback for Expo Go
+        for (const contact of user.emergencyContacts) {
+          try {
+            const { NativeSmsService } = require('@/services/nativeSmsService');
+            await NativeSmsService.sendDirectSMS(contact.phone, message);
+          } catch (error) {
+            console.error('SMS failed:', error);
+          }
         }
-      });
+        Alert.alert('SMS Sent', 'Emergency SMS sent to all contacts');
+      }
     }
   };
 
-  const sendWhatsAppAlert = () => {
+  const sendWhatsAppAlert = async () => {
     if (user?.emergencyContacts?.length) {
-      const loc = currentLocation || location;
-      const locationText = loc ? `https://maps.google.com/?q=${loc.latitude},${loc.longitude}` : 'Location unavailable';
-      const message = `🚨 EMERGENCY ALERT: ${user.name} has been in an accident. Location: ${locationText}`;
-      const primaryContact = user.emergencyContacts.find(c => c.priority === 1);
-      if (primaryContact) {
-        const phoneNumber = primaryContact.phone.replace(/\D/g, ''); // Remove non-digits
-        const whatsappUrl = `whatsapp://send?phone=91${phoneNumber}&text=${encodeURIComponent(message)}`;
-        Linking.openURL(whatsappUrl).catch(err => {
-          console.error('Failed to open WhatsApp:', err);
-          // Fallback to web WhatsApp
-          Linking.openURL(`https://wa.me/91${phoneNumber}?text=${encodeURIComponent(message)}`);
-        });
+      const locationData = currentLocation || location;
+      const message = `🚨 EMERGENCY ALERT 🚨\n\nUser: ${user.name}\nTime: ${new Date().toLocaleString()}\nLocation: ${locationData ? `https://maps.google.com/?q=${locationData.latitude},${locationData.longitude}` : 'Unknown'}\n\nManual emergency alert from Prativedak Safety App.`;
+      
+      const primaryContact = user.emergencyContacts.sort((a, b) => a.priority - b.priority)[0];
+      const formattedNumber = primaryContact.phone.replace(/\D/g, '');
+      const whatsappNumber = formattedNumber.startsWith('91') ? formattedNumber : `91${formattedNumber}`;
+      
+      const whatsappUrl = `whatsapp://send?phone=${whatsappNumber}&text=${encodeURIComponent(message)}`;
+      
+      try {
+        const canOpen = await Linking.canOpenURL(whatsappUrl);
+        if (canOpen) {
+          await Linking.openURL(whatsappUrl);
+        } else {
+          const webWhatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+          await Linking.openURL(webWhatsappUrl);
+        }
+      } catch (error) {
+        console.error('WhatsApp failed:', error);
       }
     }
   };
@@ -141,11 +211,11 @@ export default function EmergencyScreen() {
         <Text style={styles.title}>EMERGENCY ALERT</Text>
         <Text style={styles.subtitle}>Accident simulation activated</Text>
         
-        {!isCancelled && (
+        {!isCancelled && !emergencySent && (
           <>
             <View style={styles.countdownContainer}>
               <Text style={styles.countdownText}>{countdown}</Text>
-              <Text style={styles.countdownLabel}>seconds until emergency call</Text>
+              <Text style={styles.countdownLabel}>seconds until automatic SMS/WhatsApp</Text>
             </View>
             
             <View style={styles.buttonContainer}>
@@ -160,6 +230,45 @@ export default function EmergencyScreen() {
               </TouchableOpacity>
             </View>
           </>
+        )}
+        
+        {emergencySent && (
+          <View style={styles.sentContainer}>
+            <Ionicons name="checkmark-circle" size={48} color="#28a745" />
+            <Text style={styles.sentText}>
+              {isBareWorkflow ? 'Automatic Emergency Actions Completed!' : 'Emergency Messages Sent!'}
+            </Text>
+            <Text style={styles.sentSubtext}>
+              {isBareWorkflow 
+                ? 'Automatic SMS, calls, and WhatsApp alerts have been triggered'
+                : 'SMS and WhatsApp alerts have been sent to your emergency contacts'
+              }
+            </Text>
+            
+            {emergencyResults && isBareWorkflow && (
+              <View style={styles.resultsContainer}>
+                <Text style={styles.resultsTitle}>Action Results:</Text>
+                
+                {emergencyResults.smsResults?.map((result: any, index: number) => (
+                  <Text key={index} style={styles.resultItem}>
+                    {result.success ? '✅' : '❌'} SMS to {result.contact}: {result.success ? 'Sent automatically' : 'Opened SMS app'}
+                  </Text>
+                ))}
+                
+                {emergencyResults.callResult && (
+                  <Text style={styles.resultItem}>
+                    {emergencyResults.callResult.success ? '✅' : '❌'} Call to {emergencyResults.callResult.contact}: {emergencyResults.callResult.automatic ? 'Called automatically' : 'Opened dialer'}
+                  </Text>
+                )}
+                
+                {emergencyResults.whatsappResult && (
+                  <Text style={styles.resultItem}>
+                    {emergencyResults.whatsappResult.success ? '✅' : '❌'} WhatsApp: {emergencyResults.whatsappResult.success ? 'Opened successfully' : 'Failed to open'}
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
         )}
         
         <View style={styles.alertActions}>
@@ -394,5 +503,41 @@ const styles = StyleSheet.create({
     color: '#fff',
     textAlign: 'center',
     fontWeight: '500',
+  },
+  sentContainer: {
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  sentText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#28a745',
+    marginTop: 8,
+  },
+  sentSubtext: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  resultsContainer: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    width: '100%',
+  },
+  resultsTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  resultItem: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+    textAlign: 'left',
   },
 });

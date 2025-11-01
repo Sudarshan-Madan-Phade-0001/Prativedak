@@ -7,16 +7,28 @@ export const useSensors = () => {
   const [accidentDetected, setAccidentDetected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleAccidentDetection = useCallback((data: SensorData) => {
+  const handleAccidentDetection = useCallback((result: any) => {
     setAccidentDetected(true);
-    setCurrentData(data);
+    console.log('Accident detected:', result);
   }, []);
 
   const startMonitoring = async () => {
     try {
-      await sensorService.startMonitoring(handleAccidentDetection);
-      setIsMonitoring(true);
-      setError(null);
+      const success = await sensorService.startMonitoring();
+      if (success) {
+        sensorService.addAccidentListener(handleAccidentDetection);
+        setIsMonitoring(true);
+        setError(null);
+        
+        // Log activity
+        const { activityService } = require('@/services/activityService');
+        activityService.logActivity('monitoring_start', 'Accelerometer & Gyroscope monitoring started', {
+          sensors: ['accelerometer', 'gyroscope', 'magnetometer'],
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        setError('Failed to start sensor monitoring');
+      }
     } catch (err: any) {
       setError(err.message);
     }
@@ -24,7 +36,15 @@ export const useSensors = () => {
 
   const stopMonitoring = () => {
     sensorService.stopMonitoring();
+    sensorService.removeAccidentListener(handleAccidentDetection);
     setIsMonitoring(false);
+    
+    // Log activity
+    const { activityService } = require('@/services/activityService');
+    activityService.logActivity('monitoring_stop', 'Sensor monitoring stopped', {
+      duration: 'Unknown',
+      timestamp: new Date().toISOString()
+    });
   };
 
   const clearAccident = () => {
@@ -34,7 +54,7 @@ export const useSensors = () => {
   useEffect(() => {
     const interval = setInterval(() => {
       if (isMonitoring) {
-        const data = sensorService.getCurrentSensorData();
+        const data = sensorService.getCurrentData();
         if (data) {
           setCurrentData(data);
         }
@@ -52,6 +72,6 @@ export const useSensors = () => {
     startMonitoring,
     stopMonitoring,
     clearAccident,
-    getSensorHistory: () => sensorService.getSensorHistory(),
+    simulateAccident: (type?: 'collision' | 'rollover' | 'sudden_stop') => sensorService.simulateAccident(type),
   };
 };

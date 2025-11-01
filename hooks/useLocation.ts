@@ -41,12 +41,9 @@ export const useLocation = () => {
       // Log location update occasionally (every 30 seconds)
       if (Date.now() - lastLocationLog > 30000) {
         setLastLocationLog(Date.now());
-        activityService.logActivity({
-          type: 'location_update',
-          title: 'Location Updated',
-          description: `Lat: ${position.coords.latitude.toFixed(6)}, Lng: ${position.coords.longitude.toFixed(6)}`,
-          detail: `Accuracy: ${(position.coords.accuracy || 0).toFixed(1)}m`,
-          data: locationData
+        activityService.logActivity('location', `Location Updated: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`, {
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp
         });
       }
     } catch (error: any) {
@@ -65,11 +62,9 @@ export const useLocation = () => {
     getCurrentLocation();
     
     // Log activity
-    activityService.logActivity({
-      type: 'gps_start',
-      title: 'GPS Tracking Started',
-      description: 'Real-time location monitoring activated',
-      detail: 'High accuracy mode enabled'
+    activityService.logActivity('gps_start', 'GPS Tracking Started - Real-time location monitoring activated', {
+      accuracy: 'High',
+      interval: '10 seconds'
     });
   };
 
@@ -77,11 +72,7 @@ export const useLocation = () => {
     setIsTracking(false);
     
     // Log activity
-    activityService.logActivity({
-      type: 'gps_stop',
-      title: 'GPS Tracking Stopped',
-      description: 'Location monitoring has been deactivated'
-    });
+    activityService.logActivity('gps_stop', 'GPS Tracking Stopped - Location monitoring deactivated', {});
   };
 
   useEffect(() => {

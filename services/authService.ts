@@ -1,170 +1,149 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { validateEmail, isPasswordValid } from '@/utils/validation';
+import { firebaseService } from './firebaseService';
+import { auth } from '@/config/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  vehicleNumber: string;
+  emergencyContacts: EmergencyContact[];
+  createdAt: string;
+}
 
 interface EmergencyContact {
   name: string;
   phone: string;
-  priority: number;
   relationship: string;
-}
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  phone: string;
-  vehicleNumber: string;
-  emergencyContacts: EmergencyContact[];
-  password: string;
-  createdAt: string;
-}
-
-interface RegisterData {
-  name: string;
-  email: string;
-  password: string;
-  phone: string;
-  vehicleNumber: string;
-  emergencyContacts: EmergencyContact[];
-}
-
-interface AuthResponse {
-  success: boolean;
-  message: string;
-  user?: Omit<User, 'password'>;
+  priority: number;
 }
 
 class AuthService {
-  private readonly USERS_KEY = 'app_users';
-  private readonly CURRENT_USER_KEY = 'current_user';
-  private readonly AUTH_TOKEN_KEY = 'auth_token';
+  private readonly STORAGE_KEYS = {
+    USER: 'user_data',
+    IS_FIRST_TIME: 'is_first_time',
+    AUTH_TOKEN: 'auth_token'
+  };
 
-  async register(userData: RegisterData): Promise<AuthResponse> {
-    const { name, email, password, phone, vehicleNumber, emergencyContacts } = userData;
-    
-    if (!name.trim() || !email.trim() || !password.trim() || !phone.trim() || !vehicleNumber.trim()) {
-      return { success: false, message: 'All fields are required' };
-    }
 
-    if (!validateEmail(email)) {
-      return { success: false, message: 'Invalid email format' };
-    }
 
-    if (!isPasswordValid(password)) {
-      return { success: false, message: 'Password must be at least 5 characters' };
-    }
-
-    const users = await this.getUsers();
-    if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-      return { success: false, message: 'Email already registered' };
-    }
-
-    const user: User = {
-      id: Date.now().toString(),
-      email: email.toLowerCase().trim(),
-      name: name.trim(),
-      phone: phone.trim(),
-      vehicleNumber: vehicleNumber.trim().toUpperCase(),
-      emergencyContacts: emergencyContacts || [],
-      password: btoa(password + 'salt'),
-      createdAt: new Date().toISOString(),
-    };
-
-    users.push(user);
-    await AsyncStorage.setItem(this.USERS_KEY, JSON.stringify(users));
-
-    const { password: _, ...userWithoutPassword } = user;
-    return { success: true, message: 'Registration successful', user: userWithoutPassword };
-  }
-
-  async login(email: string, password: string): Promise<AuthResponse> {
-    if (!email.trim() || !password.trim()) {
-      return { success: false, message: 'Email and password are required' };
-    }
-
-    if (!validateEmail(email)) {
-      return { success: false, message: 'Invalid email format' };
-    }
-
-    const users = await this.getUsers();
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-
-    if (!user || btoa(password + 'salt') !== user.password) {
-      return { success: false, message: 'Invalid email or password' };
-    }
-
-    const token = btoa(`${user.id}_${Date.now()}`);
-    await AsyncStorage.setItem(this.AUTH_TOKEN_KEY, token);
-    
-    const { password: _, ...userWithoutPassword } = user;
-    await AsyncStorage.setItem(this.CURRENT_USER_KEY, JSON.stringify(userWithoutPassword));
-
-    return { success: true, message: 'Login successful', user: userWithoutPassword };
-  }
-
-  async logout(): Promise<void> {
-    await AsyncStorage.multiRemove([this.AUTH_TOKEN_KEY, this.CURRENT_USER_KEY]);
-  }
-
-  async getCurrentUser(): Promise<Omit<User, 'password'> | null> {
+  // Check if first time user
+  async isFirstTime(): Promise<boolean> {
     try {
-      const token = await AsyncStorage.getItem(this.AUTH_TOKEN_KEY);
-      if (!token) return null;
-      const userStr = await AsyncStorage.getItem(this.CURRENT_USER_KEY);
-      if (!userStr) return null;
-      
-      const user = JSON.parse(userStr);
-      // Ensure emergencyContacts is always an array
-      if (!user.emergencyContacts) {
-        user.emergencyContacts = [];
+      const value = await AsyncStorage.getItem(this.STORAGE_KEYS.IS_FIRST_TIME);
+      return value === null;
+    } catch (error) {
+      console.error('Error checking first time:', error);
+      return true;
+    }
+  }
+
+  // Complete onboarding
+  async completeOnboarding(): Promise<void> {
+    try {
+      await AsyncStorage.setItem(this.STORAGE_KEYS.IS_FIRST_TIME, 'false');
+    } catch (error) {
+      console.error('Error completing onboarding:', error);
+    }
+  }
+
+  // Login user
+  async login(email: string, password: string): Promise<{ success: boolean; message: string; user?: User }> {
+    try {
+      if (!email || !password) {
+        return { success: false, message: 'Email and password are required' };
       }
-      return user;
-    } catch {
+      
+      const result = await firebaseService.login(email, password);
+      if (result.success && result.user) {
+        await AsyncStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(result.user));
+        await AsyncStorage.setItem(this.STORAGE_KEYS.AUTH_TOKEN, 'firebase_token');
+        return { success: true, message: 'Login successful', user: result.user };
+      }
+      
+      return { success: false, message: result.message || 'Login failed' };
+    } catch (error) {
+      console.error('Login error:', error);
+      return { success: false, message: 'Login failed. Please try again.' };
+    }
+  }
+
+  // Register user
+  async register(userData: any): Promise<{ success: boolean; message: string; user?: User }> {
+    try {
+      if (!userData.name || !userData.email || !userData.password) {
+        return { success: false, message: 'Name, email and password are required' };
+      }
+
+      const result = await firebaseService.register(userData.email, userData.password, userData);
+      if (result.success && result.user) {
+        await AsyncStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(result.user));
+        await AsyncStorage.setItem(this.STORAGE_KEYS.AUTH_TOKEN, 'firebase_token');
+        return { success: true, message: 'Registration successful', user: result.user };
+      }
+      
+      return { success: false, message: result.message || 'Registration failed' };
+    } catch (error) {
+      console.error('Registration error:', error);
+      return { success: false, message: 'Registration failed. Please try again.' };
+    }
+  }
+
+  // Get current user
+  async getCurrentUser(): Promise<User | null> {
+    try {
+      return await firebaseService.getCurrentUser();
+    } catch (error) {
+      console.error('Error getting current user:', error);
       return null;
     }
   }
 
+  // Check if user is authenticated
   async isAuthenticated(): Promise<boolean> {
-    const token = await AsyncStorage.getItem(this.AUTH_TOKEN_KEY);
-    return !!token;
+    try {
+      const currentUser = await AsyncStorage.getItem('current_user');
+      return currentUser !== null;
+    } catch (error) {
+      console.error('Error checking authentication:', error);
+      return false;
+    }
   }
 
-  async updateProfile(userData: Partial<User>): Promise<AuthResponse> {
+  // Logout user
+  async logout(): Promise<void> {
+    try {
+      await AsyncStorage.multiRemove([
+        this.STORAGE_KEYS.USER,
+        this.STORAGE_KEYS.AUTH_TOKEN,
+        'current_user'
+      ]);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  }
+
+  // Update user profile
+  async updateProfile(userData: Partial<User>): Promise<{ success: boolean; message: string; user?: User }> {
     try {
       const currentUser = await this.getCurrentUser();
       if (!currentUser) {
         return { success: false, message: 'User not found' };
       }
 
-      const users = await this.getUsers();
-      const userIndex = users.findIndex(u => u.id === currentUser.id);
-      
-      if (userIndex === -1) {
-        return { success: false, message: 'User not found' };
+      // Update in Firebase
+      const result = await firebaseService.updateProfile(currentUser.id, userData);
+      if (result.success && result.user) {
+        await AsyncStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(result.user));
+        return { success: true, message: 'Profile updated successfully', user: result.user };
       }
-
-      // Update user data
-      const updatedUser = { ...users[userIndex], ...userData };
-      users[userIndex] = updatedUser;
       
-      await AsyncStorage.setItem(this.USERS_KEY, JSON.stringify(users));
-      
-      // Update current user in storage
-      const { password: _, ...userWithoutPassword } = updatedUser;
-      await AsyncStorage.setItem(this.CURRENT_USER_KEY, JSON.stringify(userWithoutPassword));
-      
-      return { success: true, message: 'Profile updated successfully', user: userWithoutPassword };
+      return { success: false, message: result.message || 'Profile update failed' };
     } catch (error) {
-      return { success: false, message: 'Failed to update profile' };
-    }
-  }
-
-  private async getUsers(): Promise<User[]> {
-    try {
-      const usersStr = await AsyncStorage.getItem(this.USERS_KEY);
-      return usersStr ? JSON.parse(usersStr) : [];
-    } catch {
-      return [];
+      console.error('Profile update error:', error);
+      return { success: false, message: 'Profile update failed' };
     }
   }
 }
