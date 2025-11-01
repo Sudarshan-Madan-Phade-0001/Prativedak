@@ -9,6 +9,7 @@ import { emergencyService } from '@/services/emergencyService';
 import { bareWorkflowEmergencyService } from '@/services/bareWorkflowEmergencyService';
 import { NativeCallService } from '@/services/nativeCallService';
 import { NativeAutoSmsService } from '@/services/nativeAutoSmsService';
+import NativeEmergencyService from '@/services/nativeEmergencyService';
 
 export default function EmergencyScreen() {
   const { user } = useAuth();
@@ -23,8 +24,15 @@ export default function EmergencyScreen() {
   // Get current location when component mounts
   useEffect(() => {
     getCurrentLocation();
+    requestPermissions();
     startEmergencyCountdown();
   }, []);
+  
+  const requestPermissions = async () => {
+    if (isBareWorkflow) {
+      await NativeEmergencyService.requestPermissions();
+    }
+  };
 
   const getCurrentLocation = async () => {
     try {
@@ -125,11 +133,11 @@ export default function EmergencyScreen() {
       const primaryContact = user.emergencyContacts.sort((a, b) => a.priority - b.priority)[0];
       
       if (isBareWorkflow) {
-        // Automatic call in bare workflow
-        const success = await NativeCallService.makeEmergencyCall(primaryContact.phone);
+        // TRUE automatic call using native module
+        const success = await NativeEmergencyService.makeAutomaticCall(primaryContact.phone);
         Alert.alert(
-          'Emergency Call',
-          success ? 'Emergency call made automatically!' : 'Dialer opened - please tap call',
+          'Native Call Result',
+          success ? '✅ Emergency call made automatically!\n(No user interaction required!)' : '❌ Call failed - check permissions',
           [{ text: 'OK' }]
         );
       } else {
@@ -138,10 +146,10 @@ export default function EmergencyScreen() {
       }
     } else {
       if (isBareWorkflow) {
-        const success = await NativeCallService.makeEmergencyCall('112');
+        const success = await NativeEmergencyService.makeAutomaticCall('112');
         Alert.alert(
           'Emergency Services',
-          success ? 'Emergency call made automatically!' : 'Dialer opened - please tap call',
+          success ? '✅ Emergency call made automatically!' : '❌ Call failed - check permissions',
           [{ text: 'OK' }]
         );
       } else {
@@ -156,11 +164,12 @@ export default function EmergencyScreen() {
       const message = `🚨 MANUAL EMERGENCY ALERT 🚨\n\nUser: ${user.name}\nTime: ${new Date().toLocaleString()}\nLocation: ${locationData ? `https://maps.google.com/?q=${locationData.latitude},${locationData.longitude}` : 'Unknown'}\n\nManual emergency alert from Prativedak Safety App.`;
       
       if (isBareWorkflow) {
-        // Automatic SMS sending in bare workflow
-        const sentCount = await NativeAutoSmsService.sendBulkEmergencySMS(user.emergencyContacts, message);
+        // TRUE automatic SMS using native module
+        const phoneNumbers = user.emergencyContacts.map(c => c.phone);
+        const sentCount = await NativeEmergencyService.sendBulkSMS(phoneNumbers, message);
         Alert.alert(
-          'SMS Results',
-          `Automatic SMS sent: ${sentCount}/${user.emergencyContacts.length} contacts`,
+          'Native SMS Results',
+          `✅ Automatic SMS sent: ${sentCount}/${user.emergencyContacts.length} contacts\n(No user interaction required!)`,
           [{ text: 'OK' }]
         );
       } else {

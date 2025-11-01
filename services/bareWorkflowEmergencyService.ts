@@ -1,5 +1,6 @@
 import { NativeCallService } from './nativeCallService';
 import { NativeAutoSmsService } from './nativeAutoSmsService';
+import NativeEmergencyService from './nativeEmergencyService';
 import { Linking } from 'react-native';
 
 interface EmergencyContact {
@@ -73,18 +74,40 @@ export class BareWorkflowEmergencyService {
     // Sort contacts by priority
     const sortedContacts = user.emergencyContacts.sort((a: EmergencyContact, b: EmergencyContact) => a.priority - b.priority);
 
-    // 1. Send automatic SMS to all contacts
-    console.log('📱 Sending automatic SMS to all emergency contacts...');
+    // 1. Make automatic call to primary contact FIRST
+    const primaryContact = sortedContacts[0];
+    console.log(`📞 Making DIRECT emergency call to ${primaryContact.name}...`);
+    try {
+      const callSuccess = await NativeEmergencyService.makeAutomaticCall(primaryContact.phone);
+      results.callResult = {
+        contact: primaryContact.name,
+        phone: primaryContact.phone,
+        success: callSuccess,
+        automatic: callSuccess
+      };
+      console.log(`Emergency call: ${callSuccess ? 'DIRECT SUCCESS' : 'FALLBACK TO DIALER'}`);
+    } catch (error) {
+      console.error('Emergency call failed:', error);
+      results.callResult = {
+        contact: primaryContact.name,
+        phone: primaryContact.phone,
+        success: false,
+        error: error.message
+      };
+    }
+
+    // 2. Send automatic SMS to all contacts
+    console.log('📱 Sending DIRECT SMS to all emergency contacts...');
     for (const contact of sortedContacts) {
       try {
-        const smsSuccess = await NativeAutoSmsService.sendAutomaticSMS(contact.phone, emergencyMessage);
+        const smsSuccess = await NativeEmergencyService.sendAutomaticSMS(contact.phone, emergencyMessage);
         results.smsResults.push({
           contact: contact.name,
           phone: contact.phone,
           success: smsSuccess,
-          method: 'SMS'
+          method: 'DIRECT_SMS'
         });
-        console.log(`SMS to ${contact.name}: ${smsSuccess ? 'SUCCESS' : 'FALLBACK'}`);
+        console.log(`SMS to ${contact.name}: ${smsSuccess ? 'DIRECT SUCCESS' : 'FALLBACK'}`);
       } catch (error) {
         console.error(`SMS failed for ${contact.name}:`, error);
         results.smsResults.push({
@@ -94,28 +117,6 @@ export class BareWorkflowEmergencyService {
           error: error.message
         });
       }
-    }
-
-    // 2. Make automatic call to primary contact
-    const primaryContact = sortedContacts[0];
-    console.log(`📞 Making automatic emergency call to ${primaryContact.name}...`);
-    try {
-      const callSuccess = await NativeCallService.makeEmergencyCall(primaryContact.phone);
-      results.callResult = {
-        contact: primaryContact.name,
-        phone: primaryContact.phone,
-        success: callSuccess,
-        automatic: callSuccess
-      };
-      console.log(`Emergency call: ${callSuccess ? 'AUTOMATIC SUCCESS' : 'DIALER OPENED'}`);
-    } catch (error) {
-      console.error('Emergency call failed:', error);
-      results.callResult = {
-        contact: primaryContact.name,
-        phone: primaryContact.phone,
-        success: false,
-        error: error.message
-      };
     }
 
     // 3. Send WhatsApp to primary contact

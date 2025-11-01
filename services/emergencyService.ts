@@ -72,11 +72,14 @@ export class EmergencyService {
 
     for (const contact of sortedContacts) {
       try {
-        // Send SMS
+        // Send SMS first
         await this.sendSMS(contact.phone, message);
         
-        // Send WhatsApp
-        await this.sendWhatsApp(contact.phone, message);
+        // Wait a moment before WhatsApp
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Send WhatsApp (non-blocking)
+        this.sendWhatsApp(contact.phone, message);
         
         console.log(`Emergency messages sent to ${contact.name} (${contact.phone})`);
       } catch (error) {
@@ -105,14 +108,13 @@ export class EmergencyService {
       const canOpen = await Linking.canOpenURL(whatsappUrl);
       if (canOpen) {
         await Linking.openURL(whatsappUrl);
+        console.log(`WhatsApp opened for ${phoneNumber}`);
       } else {
-        // Fallback to web WhatsApp
-        const webWhatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
-        await Linking.openURL(webWhatsappUrl);
+        console.log('WhatsApp not installed, skipping WhatsApp message');
       }
     } catch (error) {
       console.error('WhatsApp sending failed:', error);
-      throw error;
+      // Don't throw error for WhatsApp failures, just log them
     }
   }
 }

@@ -1,5 +1,6 @@
-import { PermissionsAndroid, Platform } from 'react-native';
-import SmsAndroid from 'react-native-sms-x';
+import { Linking, Platform } from 'react-native';
+import { PermissionsAndroid } from 'react-native';
+import SendSMS from 'react-native-sms';
 
 interface EmergencyContact {
   name: string;
@@ -51,9 +52,10 @@ export class NativeSmsService {
     }
   }
 
-  // Send direct SMS (native)
+  // Send direct SMS using react-native-sms
   static async sendDirectSMS(phoneNumber: string, message: string): Promise<boolean> {
     try {
+      // First check if we have SMS permission
       const hasPermission = await this.hasSmsPermission();
       if (!hasPermission) {
         const granted = await this.requestSmsPermission();
@@ -64,25 +66,26 @@ export class NativeSmsService {
       }
 
       return new Promise((resolve) => {
-        SmsAndroid.sms(
-          {
-            body: message,
-            recipients: [phoneNumber],
-            successTypes: ['sent', 'queued'],
-            allowAndroidSendWithoutReadPermission: true
-          },
-          (fail: any) => {
-            console.error('SMS send failed:', fail);
-            resolve(false);
-          },
-          (success: any) => {
-            console.log('SMS sent successfully:', success);
+        SendSMS.send({
+          body: message,
+          recipients: [phoneNumber],
+          successTypes: ['sent', 'queued'],
+          allowAndroidSendWithoutReadPermission: true
+        }, (completed, cancelled, error) => {
+          if (completed) {
+            console.log(`SMS sent successfully to: ${phoneNumber}`);
             resolve(true);
+          } else if (cancelled) {
+            console.log('SMS sending cancelled');
+            resolve(false);
+          } else if (error) {
+            console.error('SMS sending failed:', error);
+            resolve(false);
           }
-        );
+        });
       });
     } catch (error) {
-      console.error('Direct SMS failed:', error);
+      console.error('SMS sending failed:', error);
       return false;
     }
   }
